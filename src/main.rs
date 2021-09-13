@@ -10,7 +10,9 @@ async fn get_ical(_: HttpRequest) -> impl Responder {
 
     let c = reqwest::Client::new();
 
-    let creds = get_credentials(&username, &password).await.unwrap();
+    let creds = get_credentials(username, password).await.unwrap();
+
+    dbg!(&creds);
 
     let timetables = list_timetables(&c, &creds).await.unwrap();
 

@@ -1,88 +1,99 @@
 use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Europe::Stockholm;
-use fantoccini::{Client, Locator};
 use icalendar::{Component, Event};
-use reqwest::header::{self, HeaderMap, HeaderValue};
-use scraper::{Html, Selector};
+use reqwest::cookie::{CookieStore, Jar};
+use reqwest::{header, Client, Url};
+use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
-use url::Url;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ScheduleCredentials {
-    sm_session: String,
-    asp_session: String,
-    scope: String,
+    pub cookies: String,
+    pub scope: String,
 }
 
-impl ScheduleCredentials {
-    pub fn as_headers(&self) -> HeaderMap {
-        let mut map = HeaderMap::new();
-        map.insert(
-            header::COOKIE,
-            format!(
-                "SMSESSION={}; ASP.NET_SessionId={}",
-                self.sm_session, self.asp_session
-            )
-            .try_into()
-            .unwrap(),
-        );
-        map.insert("X-Scope", HeaderValue::from_str(&self.scope).unwrap());
-        map
-    }
+fn extract_form_fields(form: &ElementRef) -> HashMap<String, String> {
+    form.select(&Selector::parse("input").unwrap())
+        .filter_map(|e| {
+            let v = e.value();
+            Some((v.attr("name")?.to_owned(), v.attr("value")?.to_owned()))
+        })
+        .collect()
+}
+
+fn parse_html_form(html: &str) -> Option<HashMap<String, String>> {
+    let html = Html::parse_document(html);
+    let form = html.select(&Selector::parse("form").unwrap()).next()?;
+    Some(extract_form_fields(&form))
 }
 
 pub async fn get_credentials(
-    username: &str,
-    password: &str,
-) -> Result<ScheduleCredentials, fantoccini::error::CmdError> {
-    let mut c = Client::new("http://localhost:4444")
-        .await
-        .expect("failed to connect to WebDriver");
+    username: String,
+    password: String,
+) -> Result<ScheduleCredentials, reqwest::Error> {
+    fn url(href: &str) -> String {
+        format!(
+            "https://login001.stockholm.se/siteminderagent/forms/{}",
+            href
+        )
+    }
 
-    c.goto("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").await?;
+    let jar = Arc::new(Jar::default());
 
-    // Switch to student login
-    c.wait()
-        .for_element(Locator::LinkText("Elever"))
-        .await?
-        .click()
+    let client = Client::builder().cookie_provider(jar.clone()).build()?;
+
+    let res = client.get("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").send().await?;
+    let html = Html::parse_document(&res.text().await?);
+    let href = html
+        .select(&Selector::parse("a.navBtn").unwrap())
+        .next()
+        .unwrap()
+        .value()
+        .attr("href")
+        .unwrap();
+
+    let res = client.get(url(href)).send().await?;
+    let html = Html::parse_document(&res.text().await?);
+    let href = html
+        .select(&Selector::parse("a.beta").unwrap())
+        .next()
+        .unwrap()
+        .value()
+        .attr("href")
+        .unwrap();
+
+    let res = client.get(url(href)).send().await?;
+    let mut form_body = parse_html_form(&res.text().await?).unwrap();
+
+    form_body.insert("user".to_owned(), username);
+    form_body.insert("password".to_owned(), password);
+    form_body.insert("submit".to_owned(), "".to_owned());
+
+    let res = client
+        .post("https://login001.stockholm.se/siteminderagent/forms/login.fcc")
+        .form(&form_body)
+        .send()
         .await?;
 
-    // Select password login
-    c.wait()
-        .for_element(Locator::LinkText("Logga in med användarnamn och lösenord"))
-        .await?
-        .click()
+    let form_body = parse_html_form(&res.text().await?).unwrap();
+
+    let res = client
+        .post("https://login001.stockholm.se/affwebservices/public/saml2sso")
+        .form(&form_body)
+        .send()
+        .await?;
+    let form_body = parse_html_form(&res.text().await?).unwrap();
+
+    let _ = client
+        .post("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/response")
+        .form(&form_body)
+        .send()
         .await?;
 
-    // Enter login details
-    c.wait()
-        .for_element(Locator::Css("input[name=user]"))
-        .await?;
-    c.form(Locator::Css("form"))
-        .await?
-        .set_by_name("user", username)
-        .await?
-        .set_by_name("password", password)
-        .await?
-        .submit()
-        .await?;
-
-    c.wait()
-        .for_url(Url::parse("https://fns.stockholm.se/ng/portal/start").unwrap())
-        .await?;
-
-    let sm_session = c.get_named_cookie("SMSESSION").await?;
-    let sm_session = sm_session.value();
-    let asp_session = c.get_named_cookie("ASP.NET_SessionId").await?;
-    let asp_session = asp_session.value();
-
-    c.goto("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").await?;
-
-    let html = reqwest::Client::new()
+    let html = client
         .get("https://fns.stockholm.se/ng/timetable/timetable-viewer/fns.stockholm.se/")
-        .header(header::COOKIE, format!("SMSESSION={}", sm_session))
         .send()
         .await
         .unwrap()
@@ -97,15 +108,17 @@ pub async fn get_credentials(
         .unwrap()
         .value()
         .attr("scope")
-        .unwrap();
+        .unwrap()
+        .to_owned();
 
-    c.close().await?;
+    let cookies = jar
+        .cookies(&Url::parse("https://fns.stockholm.se").unwrap())
+        .expect("no cookies for you")
+        .to_str()
+        .unwrap()
+        .to_owned();
 
-    Ok(ScheduleCredentials {
-        sm_session: sm_session.to_owned(),
-        asp_session: asp_session.to_owned(),
-        scope: scope.to_owned(),
-    })
+    Ok(ScheduleCredentials { cookies, scope })
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,25 +163,29 @@ pub async fn list_timetables(
                 host_name: "fns.stockholm.se".to_owned(),
             },
         })
-        .headers(creds.as_headers())
+        .header(header::COOKIE, creds.cookies.to_owned())
         .send()
         .await?;
 
-    #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Res {
-        get_personal_timetables_response: InnerRes,
-    }
+    dbg!(res.text().await?);
 
-    #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct InnerRes {
-        student_timetables: Vec<Timetable>,
-    }
+    todo!();
 
-    let ResWrapper { data } = res.json::<ResWrapper<Res>>().await?;
+    // #[derive(Debug, Deserialize)]
+    // #[serde(rename_all = "camelCase")]
+    // struct Res {
+    //     get_personal_timetables_response: InnerRes,
+    // }
 
-    Ok(data.get_personal_timetables_response.student_timetables)
+    // #[derive(Debug, Deserialize)]
+    // #[serde(rename_all = "camelCase")]
+    // struct InnerRes {
+    //     student_timetables: Vec<Timetable>,
+    // }
+
+    // let ResWrapper { data } = res.json::<ResWrapper<Res>>().await?;
+
+    // Ok(data.get_personal_timetables_response.student_timetables)
 }
 
 async fn get_render_key(
@@ -182,7 +199,7 @@ async fn get_render_key(
 
     let ResWrapper { data } = client
         .post("https://fns.stockholm.se/ng/api/get/timetable/render/key")
-        .headers(creds.as_headers())
+        .header(header::COOKIE, creds.cookies.to_owned())
         .json("")
         .send()
         .await?
@@ -303,7 +320,7 @@ pub async fn get_lessons_by_week(
 
     let ResWrapper { data } = client
         .post("https://fns.stockholm.se/ng/api/render/timetable")
-        .headers(creds.as_headers())
+        .header(header::COOKIE, creds.cookies.to_owned())
         .json(&RenderTimetableReq {
             render_key,
             host: "fns.stockholm.se".to_owned(),
