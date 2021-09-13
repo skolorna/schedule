@@ -1,12 +1,11 @@
+use actix_web::web;
 use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Europe::Stockholm;
+use headless_chrome::{Browser, LaunchOptionsBuilder};
 use icalendar::{Component, Event};
-use reqwest::cookie::{CookieStore, Jar};
-use reqwest::{header, Client, Url};
-use scraper::{ElementRef, Html, Selector};
+use reqwest::{header, Client};
+use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ScheduleCredentials {
@@ -14,86 +13,10 @@ pub struct ScheduleCredentials {
     pub scope: String,
 }
 
-fn extract_form_fields(form: &ElementRef) -> HashMap<String, String> {
-    form.select(&Selector::parse("input").unwrap())
-        .filter_map(|e| {
-            let v = e.value();
-            Some((v.attr("name")?.to_owned(), v.attr("value")?.to_owned()))
-        })
-        .collect()
-}
-
-fn parse_html_form(html: &str) -> Option<HashMap<String, String>> {
-    let html = Html::parse_document(html);
-    let form = html.select(&Selector::parse("form").unwrap()).next()?;
-    Some(extract_form_fields(&form))
-}
-
-pub async fn get_credentials(
-    username: String,
-    password: String,
-) -> Result<ScheduleCredentials, reqwest::Error> {
-    fn url(href: &str) -> String {
-        format!(
-            "https://login001.stockholm.se/siteminderagent/forms/{}",
-            href
-        )
-    }
-
-    let jar = Arc::new(Jar::default());
-
-    let client = Client::builder().cookie_provider(jar.clone()).build()?;
-
-    let res = client.get("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").send().await?;
-    let html = Html::parse_document(&res.text().await?);
-    let href = html
-        .select(&Selector::parse("a.navBtn").unwrap())
-        .next()
-        .unwrap()
-        .value()
-        .attr("href")
-        .unwrap();
-
-    let res = client.get(url(href)).send().await?;
-    let html = Html::parse_document(&res.text().await?);
-    let href = html
-        .select(&Selector::parse("a.beta").unwrap())
-        .next()
-        .unwrap()
-        .value()
-        .attr("href")
-        .unwrap();
-
-    let res = client.get(url(href)).send().await?;
-    let mut form_body = parse_html_form(&res.text().await?).unwrap();
-
-    form_body.insert("user".to_owned(), username);
-    form_body.insert("password".to_owned(), password);
-    form_body.insert("submit".to_owned(), "".to_owned());
-
-    let res = client
-        .post("https://login001.stockholm.se/siteminderagent/forms/login.fcc")
-        .form(&form_body)
-        .send()
-        .await?;
-
-    let form_body = parse_html_form(&res.text().await?).unwrap();
-
-    let res = client
-        .post("https://login001.stockholm.se/affwebservices/public/saml2sso")
-        .form(&form_body)
-        .send()
-        .await?;
-    let form_body = parse_html_form(&res.text().await?).unwrap();
-
-    let _ = client
-        .post("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/response")
-        .form(&form_body)
-        .send()
-        .await?;
-
-    let html = client
+pub async fn get_scope(cookie: &str) -> String {
+    let html = Client::new()
         .get("https://fns.stockholm.se/ng/timetable/timetable-viewer/fns.stockholm.se/")
+        .header(header::COOKIE, cookie)
         .send()
         .await
         .unwrap()
@@ -111,14 +34,71 @@ pub async fn get_credentials(
         .unwrap()
         .to_owned();
 
-    let cookies = jar
-        .cookies(&Url::parse("https://fns.stockholm.se").unwrap())
-        .expect("no cookies for you")
-        .to_str()
-        .unwrap()
-        .to_owned();
+    scope
+}
 
-    Ok(ScheduleCredentials { cookies, scope })
+pub fn get_cookies(username: String, password: String) -> String {
+    let browser = Browser::new(
+        LaunchOptionsBuilder::default()
+            .headless(false)
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
+
+    dbg!("waiting for tab");
+
+    let tab = browser.wait_for_initial_tab().unwrap();
+
+    dbg!("got tab");
+
+    tab.navigate_to("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").unwrap();
+
+    tab.wait_for_element("a.btn:nth-child(1)")
+        .unwrap()
+        .click()
+        .unwrap();
+
+    tab.wait_for_element("a.beta").unwrap().click().unwrap();
+
+    tab.wait_for_element("input[name=user]")
+        .unwrap()
+        .type_into(&username)
+        .unwrap();
+    tab.wait_for_element("input[name=password]")
+        .unwrap()
+        .type_into(&password)
+        .unwrap();
+    tab.wait_for_element("button[type=submit]")
+        .unwrap()
+        .click()
+        .unwrap();
+
+    // tab.wait_until_navigated().unwrap();
+    tab.wait_for_element(".site-navigation-header-label > h2:nth-child(1)")
+        .unwrap();
+
+    let cookies = tab
+        .get_cookies()
+        .unwrap()
+        .into_iter()
+        .map(|c| format!("{}={}", c.name, c.value))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    dbg!(&cookies);
+    tab.navigate_to("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").unwrap();
+
+    cookies
+}
+
+pub async fn get_credentials(username: String, password: String) -> ScheduleCredentials {
+    let cookies = web::block(|| get_cookies(username, password))
+        .await
+        .unwrap();
+    let scope = get_scope(&cookies).await;
+
+    ScheduleCredentials { cookies, scope }
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,25 +147,21 @@ pub async fn list_timetables(
         .send()
         .await?;
 
-    dbg!(res.text().await?);
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Res {
+        get_personal_timetables_response: InnerRes,
+    }
 
-    todo!();
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct InnerRes {
+        student_timetables: Vec<Timetable>,
+    }
 
-    // #[derive(Debug, Deserialize)]
-    // #[serde(rename_all = "camelCase")]
-    // struct Res {
-    //     get_personal_timetables_response: InnerRes,
-    // }
+    let ResWrapper { data } = res.json::<ResWrapper<Res>>().await?;
 
-    // #[derive(Debug, Deserialize)]
-    // #[serde(rename_all = "camelCase")]
-    // struct InnerRes {
-    //     student_timetables: Vec<Timetable>,
-    // }
-
-    // let ResWrapper { data } = res.json::<ResWrapper<Res>>().await?;
-
-    // Ok(data.get_personal_timetables_response.student_timetables)
+    Ok(data.get_personal_timetables_response.student_timetables)
 }
 
 async fn get_render_key(
