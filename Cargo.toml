@@ -6,12 +6,14 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+actix-web = "4.0.0-beta.5"
 chrono = "0.4.19"
+chrono-tz = "0.5.3"
 dotenv = "0.15.0"
 fantoccini = "0.17.4"
 icalendar = "0.10.0"
+mime = "0.3.16"
 reqwest = { version = "0.11.4", features = ["json"] }
 scraper = "0.12.0"
 serde = { version = "1.0.130", features = ["derive"] }
-tokio = { version = "1.11.0", features = ["full"] }
 url = "2.2.2"
