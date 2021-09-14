@@ -1,10 +1,18 @@
-use actix_web::{http::header, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{http::header, web, App, HttpResponse, HttpServer, Responder};
+use chrono::{Datelike, NaiveDate};
 use dotenv::dotenv;
 use icalendar::{Calendar, Event};
-use schedule::{get_credentials, get_lessons_by_week, list_timetables};
+use schedule::{auth::get_credentials, get_lessons};
+use serde::Deserialize;
 use std::env;
 
-async fn get_ical(_: HttpRequest) -> impl Responder {
+#[derive(Debug, Deserialize)]
+struct GetCalendarInfo {
+    from: NaiveDate,
+    to: NaiveDate,
+}
+
+async fn get_ical(web::Query(info): web::Query<GetCalendarInfo>) -> impl Responder {
     let username = env::var("S_USERNAME").expect("set S_USERNAME");
     let password = env::var("S_PASSWORD").expect("set S_PASSWORD");
 
@@ -12,11 +20,10 @@ async fn get_ical(_: HttpRequest) -> impl Responder {
 
     let creds = get_credentials(username, password).await.unwrap();
 
-    let timetables = list_timetables(&c, &creds).await.unwrap();
-
-    let t = timetables.into_iter().next().unwrap();
-
-    let lessons = get_lessons_by_week(&c, &creds, 2021, 38, t).await.unwrap();
+    // let lessons = get_lessons_by_week(&c, &creds, 2021, 38, t).await.unwrap();
+    let lessons = get_lessons(&c, &creds, info.from.iso_week(), info.to.iso_week())
+        .await
+        .unwrap();
 
     let mut cal = Calendar::new();
 

@@ -7,12 +7,12 @@ edition = "2018"
 
 [dependencies]
 actix-web = "4.0.0-beta.5"
-chrono = "0.4.19"
+chrono = { version = "0.4.19", features = ["serde"] }
 chrono-tz = "0.5.3"
 dotenv = "0.15.0"
 icalendar = "0.10.0"
+lazy_static = "1.4.0"
 mime = "0.3.16"
 reqwest = { version = "0.11.4", features = ["json", "cookies"] }
 scraper = "0.12.0"
 serde = { version = "1.0.130", features = ["derive"] }
-url = "2.2.2"

@@ -1,139 +1,13 @@
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
+pub mod auth;
+pub mod util;
+
+use std::convert::TryInto;
+
+use auth::ScheduleCredentials;
+use chrono::{DateTime, Datelike, Duration, IsoWeek, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Europe::Stockholm;
 use icalendar::{Component, Event};
-use reqwest::cookie::{CookieStore, Jar};
-use reqwest::header::HeaderMap;
-use reqwest::{header, Client, Url};
-use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::sync::Arc;
-
-#[derive(Debug)]
-pub struct ScheduleCredentials {
-    pub cookies: String,
-    pub scope: String,
-}
-
-impl ScheduleCredentials {
-    pub fn as_headers(&self) -> HeaderMap {
-        let mut map = HeaderMap::new();
-        map.insert(header::COOKIE, self.cookies.to_owned().try_into().unwrap());
-        map.insert(
-            "X-Scope",
-            header::HeaderValue::from_str(&self.scope).unwrap(),
-        );
-        map
-    }
-}
-
-fn extract_form_fields(form: &ElementRef) -> HashMap<String, String> {
-    form.select(&Selector::parse("input").unwrap())
-        .filter_map(|e| {
-            let v = e.value();
-            Some((v.attr("name")?.to_owned(), v.attr("value")?.to_owned()))
-        })
-        .collect()
-}
-
-fn parse_html_form(html: &str) -> Option<HashMap<String, String>> {
-    let html = Html::parse_document(html);
-    let form = html.select(&Selector::parse("form").unwrap()).next()?;
-    Some(extract_form_fields(&form))
-}
-
-pub async fn get_credentials(
-    username: String,
-    password: String,
-) -> Result<ScheduleCredentials, reqwest::Error> {
-    fn url(href: &str) -> String {
-        format!(
-            "https://login001.stockholm.se/siteminderagent/forms/{}",
-            href
-        )
-    }
-
-    let jar = Arc::new(Jar::default());
-
-    let client = Client::builder().cookie_provider(jar.clone()).build()?;
-
-    let res = client.get("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").send().await?;
-    let html = Html::parse_document(&res.text().await?);
-    let href = html
-        .select(&Selector::parse("a.navBtn").unwrap())
-        .next()
-        .unwrap()
-        .value()
-        .attr("href")
-        .unwrap();
-
-    let res = client.get(url(href)).send().await?;
-    let html = Html::parse_document(&res.text().await?);
-    let href = html
-        .select(&Selector::parse("a.beta").unwrap())
-        .next()
-        .unwrap()
-        .value()
-        .attr("href")
-        .unwrap();
-
-    let res = client.get(url(href)).send().await?;
-    let mut form_body = parse_html_form(&res.text().await?).unwrap();
-
-    form_body.insert("user".to_owned(), username);
-    form_body.insert("password".to_owned(), password);
-    form_body.insert("submit".to_owned(), "".to_owned());
-
-    let res = client
-        .post("https://login001.stockholm.se/siteminderagent/forms/login.fcc")
-        .form(&form_body)
-        .send()
-        .await?;
-
-    let form_body = parse_html_form(&res.text().await?).unwrap();
-
-    let res = client
-        .post("https://login001.stockholm.se/affwebservices/public/saml2sso")
-        .form(&form_body)
-        .send()
-        .await?;
-    let form_body = parse_html_form(&res.text().await?).unwrap();
-
-    let _ = client
-        .post("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/response")
-        .form(&form_body)
-        .send()
-        .await?;
-
-    let html = client
-        .get("https://fns.stockholm.se/ng/timetable/timetable-viewer/fns.stockholm.se/")
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    let doc = Html::parse_document(&html);
-
-    let scope = doc
-        .select(&Selector::parse("nova-widget").unwrap())
-        .next()
-        .unwrap()
-        .value()
-        .attr("scope")
-        .unwrap()
-        .to_owned();
-
-    let cookies = jar
-        .cookies(&Url::parse("https://fns.stockholm.se").unwrap())
-        .expect("no cookies for you")
-        .to_str()
-        .unwrap()
-        .to_owned();
-
-    Ok(ScheduleCredentials { cookies, scope })
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,16 +105,16 @@ struct S24Lesson {
 }
 
 impl S24Lesson {
-    pub fn weekday(&self) -> Weekday {
+    pub fn weekday(&self) -> Option<Weekday> {
         match self.day_of_week_number {
-            1 => Weekday::Mon,
-            2 => Weekday::Tue,
-            3 => Weekday::Wed,
-            4 => Weekday::Thu,
-            5 => Weekday::Fri,
-            6 => Weekday::Sat,
-            7 => Weekday::Sun,
-            _ => unreachable!(),
+            1 => Some(Weekday::Mon),
+            2 => Some(Weekday::Tue),
+            3 => Some(Weekday::Wed),
+            4 => Some(Weekday::Thu),
+            5 => Some(Weekday::Fri),
+            6 => Some(Weekday::Sat),
+            7 => Some(Weekday::Sun),
+            _ => None,
         }
     }
 }
@@ -302,9 +176,8 @@ impl From<Lesson> for Event {
 pub async fn get_lessons_by_week(
     client: &reqwest::Client,
     creds: &ScheduleCredentials,
-    year: i32,
-    week: u32,
-    info: Timetable,
+    iso_week: IsoWeek,
+    info: &Timetable,
 ) -> Result<Vec<Lesson>, reqwest::Error> {
     let render_key = get_render_key(client, creds).await?;
 
@@ -325,7 +198,7 @@ pub async fn get_lessons_by_week(
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Res {
-        lesson_info: Vec<S24Lesson>,
+        lesson_info: Option<Vec<S24Lesson>>,
     }
 
     let ResWrapper { data } = client
@@ -334,13 +207,13 @@ pub async fn get_lessons_by_week(
         .json(&RenderTimetableReq {
             render_key,
             host: "fns.stockholm.se".to_owned(),
-            unit_guid: info.unit_guid,
+            unit_guid: info.unit_guid.to_owned(),
             width: 732,
             height: 550,
             selection_type: 5,
-            selection: info.person_guid,
-            week,
-            year,
+            selection: info.person_guid.to_owned(),
+            week: iso_week.week(),
+            year: iso_week.year(),
         })
         .send()
         .await?
@@ -349,13 +222,42 @@ pub async fn get_lessons_by_week(
 
     let lessons = data
         .lesson_info
+        .unwrap_or(vec![])
         .into_iter()
-        .map(|l| {
-            let d = NaiveDate::from_isoywd(year, week, l.weekday());
-            Lesson::try_from_lesson(l, d)
+        .filter_map(|l| {
+            let d = NaiveDate::from_isoywd(iso_week.year(), iso_week.week(), l.weekday()?);
+            Some(Lesson::try_from_lesson(l, d))
         })
         .collect::<Result<Vec<Lesson>, chrono::ParseError>>()
         .expect("failed to parse");
+
+    Ok(lessons)
+}
+
+pub async fn get_lessons(
+    client: &reqwest::Client,
+    creds: &ScheduleCredentials,
+    from: IsoWeek,
+    to: IsoWeek,
+) -> Result<Vec<Lesson>, reqwest::Error> {
+    let timetables = list_timetables(&client, &creds).await.unwrap();
+    let t = timetables.into_iter().next().unwrap();
+    let from = NaiveDate::from_isoywd(from.year(), from.week(), Weekday::Mon);
+    let to = NaiveDate::from_isoywd(to.year(), to.week(), Weekday::Sun);
+
+    let num_weeks: u32 = (to - from)
+        .num_weeks()
+        .try_into()
+        .expect("from cannot be after to");
+
+    let mut lessons: Vec<Lesson> = vec![];
+
+    for w in 0..=num_weeks {
+        let d = from + Duration::weeks(w.into());
+        let mut l = get_lessons_by_week(client, creds, d.iso_week(), &t).await?;
+
+        lessons.append(&mut l);
+    }
 
     Ok(lessons)
 }
