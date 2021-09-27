@@ -16,3 +16,7 @@ mime = "0.3.16"
 reqwest = { version = "0.11.4", features = ["json", "cookies"] }
 scraper = "0.12.0"
 serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "1.0.68"
+yup-oauth2 = "6.0.0"
+
+[features]
