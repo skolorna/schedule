@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - id: prep
+        run: |
+          echo ::set-output name=version::$(cargo pkgid | cut -d "#" -f2 -)
+      - run: cargo build --release
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: target/release/schedule
+          tag: v${{ steps.prep.outputs.version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v2
+      - uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - id: prep
+        run: |
+          echo ::set-output name=version::$(cargo pkgid | cut -d "#" -f2 -)
+      - uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: |
+            ghcr.io/skolorna/schedule:${{ steps.prep.outputs.version }}
+            ghcr.io/skolorna/schedule:latest
