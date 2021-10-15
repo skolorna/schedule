@@ -81,6 +81,13 @@ async fn get_lessons_endpoint(
     Ok(HttpResponse::Ok().json(lessons))
 }
 
+async fn get_health() -> HttpResponse {
+    HttpResponse::Ok()
+        .insert_header(CacheControl(vec![CacheDirective::NoStore]))
+        .content_type(ContentType::plaintext())
+        .body("Alles Gut!")
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
@@ -92,6 +99,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .wrap(Cors::permissive())
+            .route("/health", web::get().to(get_health))
             .route("/auth", web::post().to(authenticate))
             .route("/lessons", web::get().to(get_lessons_endpoint))
     })
