@@ -12,7 +12,6 @@ actix-web-httpauth = "0.6.0-beta.2"
 chrono = { version = "0.4.19", features = ["serde"] }
 chrono-tz = "0.5.3"
 dotenv = "0.15.0"
-icalendar = "0.10.0"
 jsonwebtoken = "7.2.0"
 lazy_static = "1.4.0"
 mime = "0.3.16"

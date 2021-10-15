@@ -5,7 +5,6 @@ pub mod util;
 
 use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
 use chrono_tz::Europe::Stockholm;
-use icalendar::{Component, Event};
 use s24::S24Lesson;
 use serde::{Deserialize, Serialize};
 
@@ -51,22 +50,5 @@ impl Lesson {
                 location,
             },
         })
-    }
-}
-
-impl From<Lesson> for Event {
-    fn from(l: Lesson) -> Self {
-        let mut e = Event::new();
-        e.summary(&l.info.course).starts(l.start).ends(l.end);
-
-        if let Some(location) = l.info.location {
-            e.location(&location);
-        }
-
-        if let Some(teacher) = l.info.teacher {
-            e.description(&teacher);
-        }
-
-        e.done()
     }
 }
