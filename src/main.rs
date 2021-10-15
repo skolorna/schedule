@@ -46,7 +46,6 @@ async fn authenticate(
     .map_err(|_| AppError::InternalError)?;
 
     Ok(HttpResponse::Ok()
-        .insert_header(CacheControl(vec![CacheDirective::Private]))
         .content_type(ContentType::plaintext())
         .body(token))
 }
@@ -78,7 +77,12 @@ async fn get_lessons_endpoint(
 
     let lessons = get_lessons(&Client::new(), &creds, week).await?;
 
-    Ok(HttpResponse::Ok().json(lessons))
+    Ok(HttpResponse::Ok()
+        .insert_header(CacheControl(vec![
+            CacheDirective::Private,
+            CacheDirective::MaxAge(3600),
+        ]))
+        .json(lessons))
 }
 
 async fn get_health() -> HttpResponse {
@@ -98,7 +102,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(|| {
         App::new()
-            .wrap(Cors::permissive())
+            .wrap(Cors::permissive().max_age(3600))
             .route("/health", web::get().to(get_health))
             .route("/auth", web::post().to(authenticate))
             .route("/lessons", web::get().to(get_lessons_endpoint))
