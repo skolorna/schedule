@@ -1,7 +1,10 @@
-use std::env;
+use std::{env, net::SocketAddr};
 
 use actix_cors::Cors;
-use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web::{
+    http::header::{CacheControl, CacheDirective, ContentType},
+    web, App, HttpResponse, HttpServer,
+};
 use actix_web_httpauth::extractors::bearer::BearerAuth;
 use chrono::{Datelike, Duration, NaiveDate, Utc, Weekday};
 use dotenv::dotenv;
@@ -9,6 +12,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use reqwest::Client;
 use schedule::{
     auth::{get_credentials, ScheduleCredentials},
+    errors::{AppError, AppResult},
     s24::get_lessons,
 };
 use serde::{Deserialize, Serialize};
@@ -27,10 +31,10 @@ struct AuthTokenClaims {
 
 async fn authenticate(
     web::Json(AuthRequest { username, password }): web::Json<AuthRequest>,
-) -> HttpResponse {
+) -> AppResult<HttpResponse> {
     let encoding_key = EncodingKey::from_secret(env::var("JWT_SECRET").unwrap().as_bytes());
 
-    let creds = get_credentials(&username, &password).await.unwrap();
+    let creds = get_credentials(&username, &password).await?;
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &AuthTokenClaims {
@@ -39,9 +43,12 @@ async fn authenticate(
         },
         &encoding_key,
     )
-    .unwrap();
+    .map_err(|_| AppError::InternalError)?;
 
-    HttpResponse::Ok().body(token)
+    Ok(HttpResponse::Ok()
+        .insert_header(CacheControl(vec![CacheDirective::Private]))
+        .content_type(ContentType::plaintext())
+        .body(token))
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,7 +57,10 @@ struct LessonsQuery {
     week: u32,
 }
 
-async fn get_lessons_endpoint(auth: BearerAuth, info: web::Query<LessonsQuery>) -> HttpResponse {
+async fn get_lessons_endpoint(
+    auth: BearerAuth,
+    info: web::Query<LessonsQuery>,
+) -> AppResult<HttpResponse> {
     let week = NaiveDate::from_isoywd(info.year, info.week, Weekday::Mon).iso_week();
 
     let jwt_secret = env::var("JWT_SECRET").unwrap();
@@ -61,19 +71,23 @@ async fn get_lessons_endpoint(auth: BearerAuth, info: web::Query<LessonsQuery>) 
         &decoding_key,
         &Validation::new(Algorithm::HS256),
     )
-    .unwrap()
+    .map_err(|_| AppError::InvalidToken)?
     .claims;
 
-    let creds = ScheduleCredentials::decrypt(&claims.data).unwrap();
+    let creds = ScheduleCredentials::decrypt(&claims.data).map_err(|_| AppError::InvalidToken)?;
 
-    let lessons = get_lessons(&Client::new(), &creds, week).await.unwrap();
+    let lessons = get_lessons(&Client::new(), &creds, week).await?;
 
-    HttpResponse::Ok().json(lessons)
+    Ok(HttpResponse::Ok().json(lessons))
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+
+    let socket = SocketAddr::new("0.0.0.0".parse().unwrap(), 8000);
+
+    eprintln!("Binding {}", socket);
 
     HttpServer::new(|| {
         App::new()
@@ -81,7 +95,7 @@ async fn main() -> std::io::Result<()> {
             .route("/auth", web::post().to(authenticate))
             .route("/lessons", web::get().to(get_lessons_endpoint))
     })
-    .bind(("0.0.0.0", 8000))?
+    .bind(socket)?
     .run()
     .await
 }

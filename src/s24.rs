@@ -1,20 +1,22 @@
-use std::convert::TryInto;
-
-use crate::{auth::ScheduleCredentials, errors::AppResult, Lesson};
-use chrono::{Datelike, Duration, IsoWeek, NaiveDate, Weekday};
+use crate::{
+    auth::ScheduleCredentials,
+    errors::{AppError, AppResult},
+    Lesson,
+};
+use chrono::{IsoWeek, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Timetable {
-    first_name: String,
-    last_name: String,
+    // first_name: String,
+    // last_name: String,
     person_guid: String,
-    school_guid: String,
-    #[serde(rename = "schoolID")]
-    school_id: String,
-    #[serde(rename = "timetableID")]
-    timetable_id: String,
+    // school_guid: String,
+    // #[serde(rename = "schoolID")]
+    // school_id: String,
+    // #[serde(rename = "timetableID")]
+    // timetable_id: String,
     unit_guid: String,
 }
 
@@ -91,12 +93,12 @@ async fn get_render_key(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct S24Lesson {
-    pub guid_id: String,
+    // pub guid_id: String,
     pub texts: Vec<String>,
     pub time_start: String,
     pub time_end: String,
     pub day_of_week_number: u8,
-    pub block_name: String,
+    // pub block_name: String,
 }
 
 impl S24Lesson {
@@ -180,36 +182,11 @@ pub async fn get_lessons(
     creds: &ScheduleCredentials,
     week: IsoWeek,
 ) -> AppResult<Vec<Lesson>> {
-    let timetables = list_timetables(client, creds).await.unwrap();
-    let t = timetables.into_iter().next().unwrap();
+    let timetables = list_timetables(client, creds).await?;
+    let t = timetables
+        .into_iter()
+        .next()
+        .ok_or(AppError::InternalError)?;
 
     Ok(get_lessons_by_week(client, creds, week, &t).await?)
-}
-
-pub async fn get_lessons_multi(
-    client: &reqwest::Client,
-    creds: &ScheduleCredentials,
-    from: IsoWeek,
-    to: IsoWeek,
-) -> Result<Vec<Lesson>, reqwest::Error> {
-    let timetables = list_timetables(client, creds).await.unwrap();
-    let t = timetables.into_iter().next().unwrap();
-    let from = NaiveDate::from_isoywd(from.year(), from.week(), Weekday::Mon);
-    let to = NaiveDate::from_isoywd(to.year(), to.week(), Weekday::Sun);
-
-    let num_weeks: u32 = (to - from)
-        .num_weeks()
-        .try_into()
-        .expect("from cannot be after to");
-
-    let mut lessons: Vec<Lesson> = vec![];
-
-    for w in 0..=num_weeks {
-        let d = from + Duration::weeks(w.into());
-        let mut l = get_lessons_by_week(client, creds, d.iso_week(), &t).await?;
-
-        lessons.append(&mut l);
-    }
-
-    Ok(lessons)
 }

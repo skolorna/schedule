@@ -1,6 +1,5 @@
 pub mod auth;
 pub mod errors;
-pub mod gcal;
 pub mod s24;
 pub mod util;
 

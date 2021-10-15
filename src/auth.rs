@@ -1,5 +1,4 @@
-use std::{convert::TryInto, sync::Arc};
-
+use lazy_static::lazy_static;
 use reqwest::{
     cookie::{CookieStore, Jar},
     header::{self, HeaderMap},
@@ -7,8 +6,12 @@ use reqwest::{
 };
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
+use std::{convert::TryInto, sync::Arc};
 
-use crate::{errors::AppResult, util::parse_html_form};
+use crate::{
+    errors::{AppError, AppResult},
+    util::parse_html_form,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScheduleCredentials {
@@ -37,6 +40,13 @@ impl ScheduleCredentials {
 }
 
 pub async fn get_credentials(username: &str, password: &str) -> AppResult<ScheduleCredentials> {
+    lazy_static! {
+        static ref A_NAVBTN: Selector = Selector::parse("a.navBtn").unwrap();
+        static ref A_BETA: Selector = Selector::parse("a.beta").unwrap();
+        static ref NOVA_WIDGET: Selector = Selector::parse("nova-widget").unwrap();
+        static ref COOKIE_URL: Url = Url::parse("https://fns.stockholm.se").unwrap();
+    }
+
     fn url(href: &str) -> String {
         format!(
             "https://login001.stockholm.se/siteminderagent/forms/{}",
@@ -51,25 +61,23 @@ pub async fn get_credentials(username: &str, password: &str) -> AppResult<Schedu
     let res = client.get("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/authenticate?customer=https://login001.stockholm.se&targetsystem=TimetableViewer").send().await?;
     let html = Html::parse_document(&res.text().await?);
     let href = html
-        .select(&Selector::parse("a.navBtn").unwrap())
+        .select(&A_NAVBTN)
         .next()
-        .unwrap()
-        .value()
-        .attr("href")
-        .unwrap();
+        .map(|e| e.value().attr("href"))
+        .flatten()
+        .ok_or(AppError::InternalError)?;
 
     let res = client.get(url(href)).send().await?;
     let html = Html::parse_document(&res.text().await?);
     let href = html
-        .select(&Selector::parse("a.beta").unwrap())
+        .select(&A_BETA)
         .next()
-        .unwrap()
-        .value()
-        .attr("href")
-        .unwrap();
+        .map(|e| e.value().attr("href"))
+        .flatten()
+        .ok_or(AppError::InternalError)?;
 
     let res = client.get(url(href)).send().await?;
-    let mut form_body = parse_html_form(&res.text().await?).unwrap();
+    let mut form_body = parse_html_form(&res.text().await?).ok_or(AppError::InternalError)?;
 
     form_body.insert("user".to_owned(), username.to_owned());
     form_body.insert("password".to_owned(), password.to_owned());
@@ -81,14 +89,14 @@ pub async fn get_credentials(username: &str, password: &str) -> AppResult<Schedu
         .send()
         .await?;
 
-    let form_body = parse_html_form(&res.text().await?).unwrap();
+    let form_body = parse_html_form(&res.text().await?).ok_or(AppError::InvalidUsernamePassword)?;
 
     let res = client
         .post("https://login001.stockholm.se/affwebservices/public/saml2sso")
         .form(&form_body)
         .send()
         .await?;
-    let form_body = parse_html_form(&res.text().await?).unwrap();
+    let form_body = parse_html_form(&res.text().await?).ok_or(AppError::InvalidUsernamePassword)?;
 
     let _ = client
         .post("https://fnsservicesso1.stockholm.se/sso-ng/saml-2.0/response")
@@ -99,27 +107,24 @@ pub async fn get_credentials(username: &str, password: &str) -> AppResult<Schedu
     let html = client
         .get("https://fns.stockholm.se/ng/timetable/timetable-viewer/fns.stockholm.se/")
         .send()
-        .await
-        .unwrap()
+        .await?
         .text()
-        .await
-        .unwrap();
+        .await?;
     let doc = Html::parse_document(&html);
 
     let scope = doc
-        .select(&Selector::parse("nova-widget").unwrap())
+        .select(&NOVA_WIDGET)
         .next()
-        .unwrap()
-        .value()
-        .attr("scope")
-        .unwrap()
+        .map(|e| e.value().attr("scope"))
+        .flatten()
+        .ok_or(AppError::InternalError)?
         .to_owned();
 
     let cookies = jar
-        .cookies(&Url::parse("https://fns.stockholm.se").unwrap())
-        .expect("no cookies for you")
+        .cookies(&COOKIE_URL)
+        .ok_or(AppError::InternalError)?
         .to_str()
-        .unwrap()
+        .map_err(|_| AppError::InternalError)?
         .to_owned();
 
     Ok(ScheduleCredentials { cookies, scope })

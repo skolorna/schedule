@@ -23,6 +23,5 @@ serde_json = "1.0.68"
 thiserror = "1.0.30"
 tracing = "0.1.29"
 tracing-subscriber = "0.2.25"
-yup-oauth2 = "6.0.0"
 
 [features]
