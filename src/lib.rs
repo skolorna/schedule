@@ -46,8 +46,8 @@ impl Lesson {
                 .with_timezone(&Utc),
             info: LessonInfo {
                 course,
-                teacher,
-                location,
+                teacher: teacher.filter(|s| !s.is_empty()),
+                location: location.filter(|s| !s.is_empty()),
             },
         })
     }
