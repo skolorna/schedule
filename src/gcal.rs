@@ -1,5 +1,3 @@
-use std::fs::OpenOptions;
-
 use chrono::{DateTime, NaiveDate, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -55,7 +53,7 @@ pub struct Event {
 
 pub async fn insert_event(
     c: &Client,
-    access_token: &AccessToken,
+    access_token: &str,
     calendar_id: &str,
     event: Event,
 ) -> Result<(), reqwest::Error> {
@@ -66,7 +64,7 @@ pub async fn insert_event(
 
     let res: Value = c
         .post(&url)
-        .bearer_auth(access_token.as_str())
+        .bearer_auth(access_token)
         .json(&event)
         .send()
         .await?

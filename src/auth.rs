@@ -6,10 +6,11 @@ use reqwest::{
     Client, Url,
 };
 use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
 
-use crate::util::parse_html_form;
+use crate::{errors::AppResult, util::parse_html_form};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ScheduleCredentials {
     pub cookies: String,
     pub scope: String,
@@ -25,12 +26,17 @@ impl ScheduleCredentials {
         );
         map
     }
+
+    pub fn encrypt(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+
+    pub fn decrypt(ciphertext: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(ciphertext)
+    }
 }
 
-pub async fn get_credentials(
-    username: &str,
-    password: &str,
-) -> Result<ScheduleCredentials, reqwest::Error> {
+pub async fn get_credentials(username: &str, password: &str) -> AppResult<ScheduleCredentials> {
     fn url(href: &str) -> String {
         format!(
             "https://login001.stockholm.se/siteminderagent/forms/{}",

@@ -1,30 +1,32 @@
 pub mod auth;
+pub mod errors;
 pub mod gcal;
 pub mod s24;
 pub mod util;
-use std::collections::HashMap;
 
-use chrono::{Date, DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
 use chrono_tz::Europe::Stockholm;
 use icalendar::{Component, Event};
 use s24::S24Lesson;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct LessonInfo {
     course: String,
     location: Option<String>,
     teacher: Option<String>,
 }
 
-#[derive(Debug)]
-pub struct LessonInstance {
+#[derive(Debug, Serialize)]
+pub struct Lesson {
     start: DateTime<Utc>,
     end: DateTime<Utc>,
+    #[serde(flatten)]
     info: LessonInfo,
 }
 
-impl LessonInstance {
-    fn try_from_lesson(value: S24Lesson, date: NaiveDate) -> Result<Self, chrono::ParseError> {
+impl Lesson {
+    fn try_from_s24_lesson(value: S24Lesson, date: NaiveDate) -> Result<Self, chrono::ParseError> {
         const FMT: &str = "%H:%M:%S";
 
         let start = NaiveTime::parse_from_str(&value.time_start, FMT)?;
@@ -51,18 +53,10 @@ impl LessonInstance {
             },
         })
     }
-
-    fn is_same(&self, other: &Self) -> bool {
-        self.start.time() == other.start.time()
-            && self.end.time() == other.end.time()
-            && self.start.weekday() == other.start.weekday()
-            && self.end.weekday() == other.end.weekday()
-            && self.info == other.info
-    }
 }
 
-impl From<LessonInstance> for Event {
-    fn from(l: LessonInstance) -> Self {
+impl From<Lesson> for Event {
+    fn from(l: Lesson) -> Self {
         let mut e = Event::new();
         e.summary(&l.info.course).starts(l.start).ends(l.end);
 
@@ -75,28 +69,5 @@ impl From<LessonInstance> for Event {
         }
 
         e.done()
-    }
-}
-
-#[derive(Debug)]
-pub struct ReccuringLesson {
-    pub dates: Vec<Date<Utc>>,
-    pub start: NaiveTime,
-    pub end: NaiveTime,
-}
-
-impl ReccuringLesson {
-    pub fn from_instances(mut instances: Vec<LessonInstance>) -> Vec<ReccuringLesson> {
-        instances.sort_unstable_by_key(|i| i.start);
-
-        instances.reverse();
-
-        let mut res: Vec<Vec<LessonInstance>> = vec![];
-
-        while let Some(i) = instances.pop() {}
-
-        dbg!(instances);
-
-        todo!();
     }
 }

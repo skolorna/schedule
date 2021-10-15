@@ -1,9 +1,7 @@
 use std::convert::TryInto;
 
-use crate::{auth::ScheduleCredentials, LessonInstance};
-use chrono::{DateTime, Datelike, Duration, IsoWeek, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
-use chrono_tz::Europe::Stockholm;
-use icalendar::{Component, Event};
+use crate::{auth::ScheduleCredentials, errors::AppResult, Lesson};
+use chrono::{Datelike, Duration, IsoWeek, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -116,12 +114,12 @@ impl S24Lesson {
     }
 }
 
-pub async fn get_lessons_by_week(
+async fn get_lessons_by_week(
     client: &reqwest::Client,
     creds: &ScheduleCredentials,
     iso_week: IsoWeek,
     info: &Timetable,
-) -> Result<Vec<LessonInstance>, reqwest::Error> {
+) -> Result<Vec<Lesson>, reqwest::Error> {
     let render_key = get_render_key(client, creds).await?;
 
     #[derive(Debug, Serialize)]
@@ -165,13 +163,13 @@ pub async fn get_lessons_by_week(
 
     let lessons = data
         .lesson_info
-        .unwrap_or(vec![])
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|l| {
             let d = NaiveDate::from_isoywd(iso_week.year(), iso_week.week(), l.weekday()?);
-            Some(LessonInstance::try_from_lesson(l, d))
+            Some(Lesson::try_from_s24_lesson(l, d))
         })
-        .collect::<Result<Vec<LessonInstance>, chrono::ParseError>>()
+        .collect::<Result<Vec<Lesson>, chrono::ParseError>>()
         .expect("failed to parse");
 
     Ok(lessons)
@@ -180,10 +178,21 @@ pub async fn get_lessons_by_week(
 pub async fn get_lessons(
     client: &reqwest::Client,
     creds: &ScheduleCredentials,
+    week: IsoWeek,
+) -> AppResult<Vec<Lesson>> {
+    let timetables = list_timetables(client, creds).await.unwrap();
+    let t = timetables.into_iter().next().unwrap();
+
+    Ok(get_lessons_by_week(client, creds, week, &t).await?)
+}
+
+pub async fn get_lessons_multi(
+    client: &reqwest::Client,
+    creds: &ScheduleCredentials,
     from: IsoWeek,
     to: IsoWeek,
-) -> Result<Vec<LessonInstance>, reqwest::Error> {
-    let timetables = list_timetables(&client, &creds).await.unwrap();
+) -> Result<Vec<Lesson>, reqwest::Error> {
+    let timetables = list_timetables(client, creds).await.unwrap();
     let t = timetables.into_iter().next().unwrap();
     let from = NaiveDate::from_isoywd(from.year(), from.week(), Weekday::Mon);
     let to = NaiveDate::from_isoywd(to.year(), to.week(), Weekday::Sun);
@@ -193,7 +202,7 @@ pub async fn get_lessons(
         .try_into()
         .expect("from cannot be after to");
 
-    let mut lessons: Vec<LessonInstance> = vec![];
+    let mut lessons: Vec<Lesson> = vec![];
 
     for w in 0..=num_weeks {
         let d = from + Duration::weeks(w.into());
