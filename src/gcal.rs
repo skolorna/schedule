@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use yup_oauth2::AccessToken;
 
@@ -36,38 +36,44 @@ pub async fn list_calendars(
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Timestamp {
-#[serde(rename_all = "camelCase")]
-		WithTime {
-			date_time: DateTime<Utc>,
-		},
-#[serde(rename_all = "camelCase")]
-		DateOnly {
-			date: NaiveDate,
-		}
+    #[serde(rename_all = "camelCase")]
+    WithTime { date_time: DateTime<Utc> },
+    #[serde(rename_all = "camelCase")]
+    DateOnly { date: NaiveDate },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
-	pub end: Timestamp,
-	pub start: Timestamp,
-	pub summary: Option<String>,
-	pub location: Option<String>,
-	pub description: Option<String>,
-	pub recurrence: Option<Vec<String>>,
+    pub end: Timestamp,
+    pub start: Timestamp,
+    pub summary: Option<String>,
+    pub location: Option<String>,
+    pub description: Option<String>,
+    pub recurrence: Option<Vec<String>>,
 }
 
 pub async fn insert_event(
-	c: &Client,
-	access_token: &AccessToken,
-	calendar_id: &str,
-	event: Event,
+    c: &Client,
+    access_token: &AccessToken,
+    calendar_id: &str,
+    event: Event,
 ) -> Result<(), reqwest::Error> {
-	let url = format!("https://www.googleapis.com/calendar/v3/calendars/{}/events", calendar_id);
+    let url = format!(
+        "https://www.googleapis.com/calendar/v3/calendars/{}/events",
+        calendar_id
+    );
 
-	let res: Value = c.post(&url).bearer_auth(access_token.as_str()).json(&event).send().await?.json().await?;
+    let res: Value = c
+        .post(&url)
+        .bearer_auth(access_token.as_str())
+        .json(&event)
+        .send()
+        .await?
+        .json()
+        .await?;
 
-	dbg!(res);
+    dbg!(res);
 
-	todo!();
+    todo!();
 }

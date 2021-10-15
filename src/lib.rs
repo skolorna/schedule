@@ -93,9 +93,7 @@ impl ReccuringLesson {
 
         let mut res: Vec<Vec<LessonInstance>> = vec![];
 
-        while let Some(i) = instances.pop() {
-            
-        }
+        while let Some(i) = instances.pop() {}
 
         dbg!(instances);
 

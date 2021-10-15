@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 
-use crate::{LessonInstance, auth::ScheduleCredentials};
+use crate::{auth::ScheduleCredentials, LessonInstance};
 use chrono::{DateTime, Datelike, Duration, IsoWeek, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Europe::Stockholm;
 use icalendar::{Component, Event};

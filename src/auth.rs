@@ -28,8 +28,8 @@ impl ScheduleCredentials {
 }
 
 pub async fn get_credentials(
-    username: String,
-    password: String,
+    username: &str,
+    password: &str,
 ) -> Result<ScheduleCredentials, reqwest::Error> {
     fn url(href: &str) -> String {
         format!(
@@ -65,8 +65,8 @@ pub async fn get_credentials(
     let res = client.get(url(href)).send().await?;
     let mut form_body = parse_html_form(&res.text().await?).unwrap();
 
-    form_body.insert("user".to_owned(), username);
-    form_body.insert("password".to_owned(), password);
+    form_body.insert("user".to_owned(), username.to_owned());
+    form_body.insert("password".to_owned(), password.to_owned());
     form_body.insert("submit".to_owned(), "".to_owned());
 
     let res = client

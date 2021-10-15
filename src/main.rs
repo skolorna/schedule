@@ -4,8 +4,14 @@ use chrono::{Datelike, Duration, IsoWeek, NaiveDate, Utc};
 use dotenv::dotenv;
 use reqwest::Client;
 // use icalendar::{Calendar, Event};
-use schedule::{ReccuringLesson, auth::get_credentials, gcal::{insert_event, list_calendars, Event, Timestamp}, s24::get_lessons};
+use schedule::{
+    auth::get_credentials,
+    gcal::{insert_event, list_calendars, Event, Timestamp},
+    s24::get_lessons,
+    ReccuringLesson,
+};
 use serde_json::json;
+use tracing::{debug, info};
 use yup_oauth2::{InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 // use serde::Deserialize;
 use std::env;
@@ -54,6 +60,7 @@ use std::env;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    tracing_subscriber::fmt::init();
 
     // let secret = yup_oauth2::read_application_secret("oauth2.json").await.unwrap();
 
@@ -95,7 +102,9 @@ async fn main() -> std::io::Result<()> {
     let username = env::var("S_USERNAME").expect("set S_USERNAME");
     let password = env::var("S_PASSWORD").expect("set S_PASSWORD");
 
-    let creds = get_credentials(username, password).await.unwrap();
+    let creds = get_credentials(&username, &password).await.unwrap();
+
+    info!("Logged in as {}", username);
 
     let lessons = get_lessons(
         &client,
