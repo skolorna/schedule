@@ -11,9 +11,9 @@ use dotenv::dotenv;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use reqwest::Client;
 use schedule::{
-    auth::{get_credentials, ScheduleCredentials},
+    auth::{get_credentials, SessionIsh},
     errors::{AppError, AppResult},
-    s24::get_lessons,
+    s24::{get_lessons_by_week, list_timetables},
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,11 +34,20 @@ async fn authenticate(
 ) -> AppResult<HttpResponse> {
     let encoding_key = EncodingKey::from_secret(env::var("JWT_SECRET").unwrap().as_bytes());
 
-    let creds = get_credentials(&username, &password).await?;
+    let credentials = get_credentials(&username, &password).await?;
+    let client = Client::new();
+    let timetables = list_timetables(&client, &credentials).await?;
+    let session = SessionIsh {
+        credentials,
+        timetable: timetables
+            .into_iter()
+            .next()
+            .ok_or(AppError::InternalError)?,
+    };
     let token = jsonwebtoken::encode(
         &Header::new(Algorithm::HS256),
         &AuthTokenClaims {
-            data: creds.encrypt(),
+            data: session.encrypt(),
             exp: (Utc::now() + Duration::minutes(15)).timestamp(),
         },
         &encoding_key,
@@ -73,9 +82,9 @@ async fn get_lessons_endpoint(
     .map_err(|_| AppError::InvalidToken)?
     .claims;
 
-    let creds = ScheduleCredentials::decrypt(&claims.data).map_err(|_| AppError::InvalidToken)?;
+    let creds = SessionIsh::decrypt(&claims.data).map_err(|_| AppError::InvalidToken)?;
 
-    let lessons = get_lessons(&Client::new(), &creds, week).await?;
+    let lessons = get_lessons_by_week(&Client::new(), &creds, week).await?;
 
     Ok(HttpResponse::Ok()
         .insert_header(CacheControl(vec![

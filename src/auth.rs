@@ -10,6 +10,7 @@ use std::{convert::TryInto, sync::Arc};
 
 use crate::{
     errors::{AppError, AppResult},
+    s24::Timetable,
     util::parse_html_form,
 };
 
@@ -29,7 +30,15 @@ impl ScheduleCredentials {
         );
         map
     }
+}
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionIsh {
+    pub credentials: ScheduleCredentials,
+    pub timetable: Timetable,
+}
+
+impl SessionIsh {
     pub fn encrypt(&self) -> String {
         serde_json::to_string(self).unwrap()
     }

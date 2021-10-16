@@ -1,12 +1,11 @@
 use crate::{
-    auth::ScheduleCredentials,
-    errors::{AppError, AppResult},
+    auth::{ScheduleCredentials, SessionIsh},
     Lesson,
 };
 use chrono::{IsoWeek, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Timetable {
     // first_name: String,
@@ -116,13 +115,15 @@ impl S24Lesson {
     }
 }
 
-async fn get_lessons_by_week(
+pub async fn get_lessons_by_week(
     client: &reqwest::Client,
-    creds: &ScheduleCredentials,
+    SessionIsh {
+        credentials,
+        timetable,
+    }: &SessionIsh,
     iso_week: IsoWeek,
-    info: &Timetable,
 ) -> Result<Vec<Lesson>, reqwest::Error> {
-    let render_key = get_render_key(client, creds).await?;
+    let render_key = get_render_key(client, credentials).await?;
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -146,15 +147,15 @@ async fn get_lessons_by_week(
 
     let ResWrapper { data } = client
         .post("https://fns.stockholm.se/ng/api/render/timetable")
-        .headers(creds.as_headers())
+        .headers(credentials.as_headers())
         .json(&RenderTimetableReq {
             render_key,
             host: "fns.stockholm.se".to_owned(),
-            unit_guid: info.unit_guid.to_owned(),
+            unit_guid: timetable.unit_guid.to_owned(),
             width: 732,
             height: 550,
             selection_type: 5,
-            selection: info.person_guid.to_owned(),
+            selection: timetable.person_guid.to_owned(),
             week: iso_week.week(),
             year: iso_week.year(),
         })
@@ -175,18 +176,4 @@ async fn get_lessons_by_week(
         .expect("failed to parse");
 
     Ok(lessons)
-}
-
-pub async fn get_lessons(
-    client: &reqwest::Client,
-    creds: &ScheduleCredentials,
-    week: IsoWeek,
-) -> AppResult<Vec<Lesson>> {
-    let timetables = list_timetables(client, creds).await?;
-    let t = timetables
-        .into_iter()
-        .next()
-        .ok_or(AppError::InternalError)?;
-
-    Ok(get_lessons_by_week(client, creds, week, &t).await?)
 }
